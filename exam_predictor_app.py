@@ -102,7 +102,7 @@ if questions:
 
     df_sorted = df.sort_values(by="Prediction Score", ascending=False)
 
-    st.subheader("🔮 Top Predicted Questions")a
+    st.subheader("🔮 Top Predicted Questions")
     st.dataframe(df_sorted.head(10), use_container_width=True)
 
     st.subheader("📊 Most Repeated Topics")
