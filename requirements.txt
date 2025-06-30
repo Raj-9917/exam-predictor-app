@@ -4,3 +4,4 @@ scikit-learn
 pytesseract
 Pillow
 PyMuPDF
+openai
