@@ -1,5 +1,3 @@
-# filename: exam_predictor_app.py
-
 import streamlit as st
 import pandas as pd
 from sklearn.feature_extraction.text import CountVectorizer
@@ -9,21 +7,20 @@ from PIL import Image
 import fitz  # PyMuPDF
 import io
 
-# Set tesseract path if needed
-# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# === Topic keywords ===
+TOPIC_KEYWORDS = {
+    "Stack": ["stack", "push", "pop", "LIFO"],
+    "Queue": ["queue", "FIFO", "enqueue", "dequeue"],
+    "Tree": ["tree", "binary tree", "BST", "traversal"],
+    "Linked List": ["linked list", "singly", "doubly", "node", "pointer"],
+    "Recursion": ["recursion", "recursive"],
+    "Sorting": ["sort", "bubble", "selection", "insertion", "merge", "quick"],
+    "Searching": ["search", "binary search", "linear search"],
+    "Hashing": ["hash", "hashing", "collision"],
+    "Graph": ["graph", "BFS", "DFS", "adjacency", "vertex", "edge"]
+}
 
-st.set_page_config(page_title="Exam Predictor", layout="centered")
-st.title("📚 AI Exam Question Predictor")
-st.markdown("Upload question papers (PDF/Image) or type manually. The app will predict most likely questions for your exam.")
-
-# Upload Section
-st.subheader("Step 1: Upload Past Questions")
-
-uploaded_file = st.file_uploader("Upload a PDF or Image (.pdf, .jpg, .png):", type=["pdf", "jpg", "png"])
-manual_input = st.text_area("Or paste questions below (one per line):", height=200)
-
-questions = []
-
+# === File extraction functions ===
 def extract_text_from_pdf(file):
     text = ""
     pdf = fitz.open(stream=file.read(), filetype="pdf")
@@ -36,38 +33,67 @@ def extract_text_from_image(image_bytes):
     text = pytesseract.image_to_string(image)
     return text
 
+# === Topic Detection ===
+def detect_topic(question):
+    q = question.lower()
+    for topic, keywords in TOPIC_KEYWORDS.items():
+        if any(kw in q for kw in keywords):
+            return topic
+    return "Unknown"
+
+# === Streamlit UI ===
+st.set_page_config(page_title="AI Exam Predictor", layout="centered")
+st.title("📚 AI-Based Exam Question & Topic Predictor")
+st.markdown("Upload PDF/image of past year paper or paste questions manually. App detects topics, predicts repeated questions, and shows important topics.")
+
+uploaded_file = st.file_uploader("📄 Upload a question paper (PDF/Image)", type=["pdf", "jpg", "png"])
+manual_input = st.text_area("✍️ Or paste questions here (one per line):", height=200)
+
+questions = []
+
 if uploaded_file:
-    file_type = uploaded_file.type
-    if "pdf" in file_type:
+    if "pdf" in uploaded_file.type:
         extracted = extract_text_from_pdf(uploaded_file)
-    elif "image" in file_type or "png" in file_type or "jpeg" in file_type:
-        extracted = extract_text_from_image(uploaded_file.read())
     else:
-        extracted = ""
-
-    questions = [line.strip() for line in extracted.strip().split("\n") if line.strip()]
-    st.success(f"Extracted {len(questions)} lines from uploaded file.")
+        extracted = extract_text_from_image(uploaded_file.read())
+    questions = [line.strip() for line in extracted.split("\n") if line.strip()]
 elif manual_input:
-    questions = [line.strip() for line in manual_input.strip().split("\n") if line.strip()]
+    questions = [line.strip() for line in manual_input.split("\n") if line.strip()]
 
-# Prediction Engine
+# === Process & Display ===
 if questions:
-    st.subheader("Step 2: AI Prediction of Important Questions")
+    st.success(f"{len(questions)} questions loaded.")
+    
+    # Tag questions with topics
+    data = []
+    for q in questions:
+        topic = detect_topic(q)
+        data.append((q, topic))
+    
+    df = pd.DataFrame(data, columns=["Question", "Topic"])
 
+    # Count topic frequency
+    topic_freq = df["Topic"].value_counts().reset_index()
+    topic_freq.columns = ["Topic", "Frequency"]
+
+    # Score similarity for question prediction
     vectorizer = CountVectorizer()
-    X = vectorizer.fit_transform(questions)
-    similarity_matrix = cosine_similarity(X, X)
-    frequency_score = pd.DataFrame(similarity_matrix).sum(axis=1)
+    X = vectorizer.fit_transform(df["Question"])
+    similarity = cosine_similarity(X, X)
+    df["Prediction Score"] = pd.DataFrame(similarity).sum(axis=1)
 
-    result_df = pd.DataFrame({
-        "Question": questions,
-        "Prediction Score": frequency_score
-    }).sort_values(by="Prediction Score", ascending=False).reset_index(drop=True)
+    df_sorted = df.sort_values(by="Prediction Score", ascending=False)
 
-    st.write("🔮 **Top Predicted Questions:**")
-    st.dataframe(result_df.head(10), use_container_width=True)
+    st.subheader("🔮 Top Predicted Questions")
+    st.dataframe(df_sorted.head(10), use_container_width=True)
+
+    st.subheader("📊 Topic-Wise Question Count")
+    st.dataframe(topic_freq, use_container_width=True)
+    
+    st.subheader("📚 All Detected Questions with Topics")
+    st.dataframe(df_sorted, use_container_width=True)
 else:
-    st.info("Please upload a question paper or paste questions manually.")
+    st.warning("Please upload or type some questions to start prediction.")
 
 st.markdown("---")
-st.caption("Created by Shashank Verma • Powered by AI")
+st.caption("Built by Shashank Verma • AI-Powered Exam Helper")
