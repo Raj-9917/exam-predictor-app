@@ -1,26 +1,17 @@
 import streamlit as st
 import pandas as pd
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 import pytesseract
 from PIL import Image
 import fitz  # PyMuPDF
 import io
+import openai
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-# === Topic keywords ===
-TOPIC_KEYWORDS = {
-    "Stack": ["stack", "push", "pop", "LIFO"],
-    "Queue": ["queue", "FIFO", "enqueue", "dequeue"],
-    "Tree": ["tree", "binary tree", "BST", "traversal"],
-    "Linked List": ["linked list", "singly", "doubly", "node", "pointer"],
-    "Recursion": ["recursion", "recursive"],
-    "Sorting": ["sort", "bubble", "selection", "insertion", "merge", "quick"],
-    "Searching": ["search", "binary search", "linear search"],
-    "Hashing": ["hash", "hashing", "collision"],
-    "Graph": ["graph", "BFS", "DFS", "adjacency", "vertex", "edge"]
-}
+# Load OpenAI API key
+openai.api_key = st.secrets["openai"]["api_key"]
 
-# === File extraction functions ===
+# === OCR and PDF Parsing ===
 def extract_text_from_pdf(file):
     text = ""
     pdf = fitz.open(stream=file.read(), filetype="pdf")
@@ -33,21 +24,49 @@ def extract_text_from_image(image_bytes):
     text = pytesseract.image_to_string(image)
     return text
 
-# === Topic Detection ===
-def detect_topic(question):
-    q = question.lower()
-    for topic, keywords in TOPIC_KEYWORDS.items():
-        if any(kw in q for kw in keywords):
-            return topic
-    return "Unknown"
+# === GPT Topic Detector ===
+def detect_topic_gpt(question):
+    prompt = f"""You are an intelligent assistant. Given the question below, identify the most relevant topic (e.g., Stack, Queue, Tree, Graph, Sorting, Recursion, etc.). Reply with only ONE topic name.
 
-# === Streamlit UI ===
-st.set_page_config(page_title="AI Exam Predictor", layout="centered")
-st.title("📚 AI-Based Exam Question & Topic Predictor")
-st.markdown("Upload PDF/image of past year paper or paste questions manually. App detects topics, predicts repeated questions, and shows important topics.")
+Question: "{question}"
+Topic:"""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful AI assistant for exam preparation."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=10
+        )
+        topic = response["choices"][0]["message"]["content"].strip()
+        return topic
+    except Exception as e:
+        print("GPT Error:", e)
+        return "Unknown"
 
-uploaded_file = st.file_uploader("📄 Upload a question paper (PDF/Image)", type=["pdf", "jpg", "png"])
-manual_input = st.text_area("✍️ Or paste questions here (one per line):", height=200)
+# === GPT Explanation Generator (optional) ===
+def explain_question_gpt(question):
+    prompt = f"Explain this question briefly in simple terms for students:\n\n{question}"
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5,
+            max_tokens=120
+        )
+        return response["choices"][0]["message"]["content"].strip()
+    except:
+        return "Explanation not available."
+
+# === Streamlit App UI ===
+st.set_page_config(page_title="GPT-Based Exam Predictor", layout="centered")
+st.title("📚 AI Exam Question & Topic Predictor")
+st.markdown("Upload a question paper or type questions manually. App uses GPT to predict topics and most repeated questions.")
+
+uploaded_file = st.file_uploader("📄 Upload a PDF/Image", type=["pdf", "jpg", "png"])
+manual_input = st.text_area("✍️ Or paste questions manually (one per line):", height=200)
 
 questions = []
 
@@ -60,23 +79,22 @@ if uploaded_file:
 elif manual_input:
     questions = [line.strip() for line in manual_input.split("\n") if line.strip()]
 
-# === Process & Display ===
+# === Analyze Questions ===
 if questions:
-    st.success(f"{len(questions)} questions loaded.")
-    
-    # Tag questions with topics
+    st.success(f"{len(questions)} questions loaded. Generating topics using GPT...")
+
     data = []
     for q in questions:
-        topic = detect_topic(q)
+        topic = detect_topic_gpt(q)
         data.append((q, topic))
-    
+
     df = pd.DataFrame(data, columns=["Question", "Topic"])
+    
+    # Frequency of each topic
+    topic_counts = df["Topic"].value_counts().reset_index()
+    topic_counts.columns = ["Topic", "Frequency"]
 
-    # Count topic frequency
-    topic_freq = df["Topic"].value_counts().reset_index()
-    topic_freq.columns = ["Topic", "Frequency"]
-
-    # Score similarity for question prediction
+    # Similarity-based prediction score
     vectorizer = CountVectorizer()
     X = vectorizer.fit_transform(df["Question"])
     similarity = cosine_similarity(X, X)
@@ -84,16 +102,25 @@ if questions:
 
     df_sorted = df.sort_values(by="Prediction Score", ascending=False)
 
-    st.subheader("🔮 Top Predicted Questions")
+    st.subheader("🔮 Top Predicted Questions")a
     st.dataframe(df_sorted.head(10), use_container_width=True)
 
-    st.subheader("📊 Topic-Wise Question Count")
-    st.dataframe(topic_freq, use_container_width=True)
-    
-    st.subheader("📚 All Detected Questions with Topics")
-    st.dataframe(df_sorted, use_container_width=True)
+    st.subheader("📊 Most Repeated Topics")
+    st.dataframe(topic_counts, use_container_width=True)
+
+    st.subheader("📘 All Questions with Topics")
+    with st.expander("📖 Show Full Table"):
+        st.dataframe(df_sorted, use_container_width=True)
+
+    # Optional: Explanation
+    st.subheader("💡 Want AI to explain a question?")
+    selected_question = st.selectbox("Select a question:", df_sorted["Question"].tolist())
+    if st.button("Explain with GPT"):
+        with st.spinner("Thinking..."):
+            explanation = explain_question_gpt(selected_question)
+        st.info(explanation)
 else:
-    st.warning("Please upload or type some questions to start prediction.")
+    st.info("Upload or type questions to begin.")
 
 st.markdown("---")
-st.caption("Built by Shashank Verma • AI-Powered Exam Helper")
+st.caption("🚀 Built by Shashank Verma • GPT-Powered Exam Assistant")
